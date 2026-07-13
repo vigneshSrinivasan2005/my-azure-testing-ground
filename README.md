@@ -1,8 +1,8 @@
-# PavBot — LLM Chatbot on Azure AI Foundry (UI-based CI/CD)
+# PavBot — LLM Chatbot on Azure AI Foundry (ClickOps CI/CD, no Docker)
 
-Flask chatbot powered by an **Azure AI Foundry** model deployment (Mistral Small 2503, serverless), containerized with Docker, deployed to **Azure Web App for Containers** using a **UI-created Azure Pipeline**.
+Flask chatbot powered by an **Azure AI Foundry** model deployment (Mistral Small 2503, serverless), deployed as **code** (no containers) to **Azure App Service**, with CI/CD wired up entirely through the **Azure Portal UI** (Deployment Center).
 
-Flow: **GitHub → Azure Repos (import) → Azure Pipelines (Docker build + push to ACR) → Web App for Containers → Azure AI Foundry model**
+Flow: **GitHub → Azure App Service Deployment Center (portal ClickOps) → auto-generated CI/CD → App Service builds & runs the app → Azure AI Foundry model**
 
 ---
 
@@ -12,7 +12,7 @@ Flow: **GitHub → Azure Repos (import) → Azure Pipelines (Docker build + push
 2. **Create a project** (this also creates an Azure OpenAI / AI Services resource in your resource group — put it in `rg-pavbot`).
 3. Left menu → **Model catalog** → pick **mistral-small-2503** → **Deploy** → Deployment type: **Global Standard** → keep the deployment name `mistral-small-2503` → Deploy.
 4. Go to **My assets → Models + endpoints** → click your deployment. Copy three things:
-   - **Target URI / Endpoint** → the part up to `.openai.azure.com/` (e.g. `https://myresource.openai.azure.com/`)
+   - **Target URI / Endpoint**
    - **Key**
    - **Deployment name** (e.g. `mistral-small-2503`)
 
@@ -42,17 +42,6 @@ export AZURE_AI_MODEL="mistral-small-2503"
 python app.py            # http://localhost:8000
 ```
 
-With Docker (env vars are passed at run time, not baked into the image):
-
-```bash
-docker build -t pavbot .
-docker run -p 8000:8000 \
-  -e AZURE_AI_ENDPOINT="https://<your-resource>.services.ai.azure.com/models" \
-  -e AZURE_AI_API_KEY="<key>" \
-  -e AZURE_AI_MODEL="mistral-small-2503" \
-  pavbot
-```
-
 ---
 
 ## 1. Push to GitHub
@@ -61,7 +50,7 @@ docker run -p 8000:8000 \
 cd chatbot-app
 git init
 git add .
-git commit -m "Initial commit: Flask chatbot with Dockerfile"
+git commit -m "Initial commit: Flask chatbot"
 git branch -M main
 git remote add origin https://github.com/<your-username>/pavbot.git
 git push -u origin main
@@ -69,81 +58,71 @@ git push -u origin main
 
 ---
 
-## 2. Import into Azure Repos (UI)
-
-1. Go to **dev.azure.com** → your organization → **New project** → name it `pavbot` → Create.
-2. Left menu → **Repos** → **Import a repository** (or click **Import** under "Import a repository").
-3. Clone URL: `https://github.com/<your-username>/pavbot.git` → **Import**.
-   - If the GitHub repo is private, tick **Requires authentication** and paste a GitHub PAT.
-
----
-
-## 3. Create Azure Container Registry (Azure Portal)
-
-1. Portal → **Create a resource** → search **Container Registry** → Create.
-2. Resource group: `rg-pavbot` (create new) · Registry name: `pavbotacr<unique>` · SKU: **Basic**.
-3. Review + Create. After deployment, open the registry → **Settings → Access keys** → enable **Admin user** (needed later for App Service pull).
-
----
-
-## 4. Build pipeline via the Azure DevOps UI wizard
-
-1. Azure DevOps → **Pipelines → Create Pipeline**.
-2. **Where is your code?** → **Azure Repos Git** → select `pavbot`.
-3. **Configure your pipeline** → choose **Docker — Build and push an image to Azure Container Registry**.
-4. Select your **Azure subscription** → Continue (sign in if prompted).
-5. Select the **Container registry** you created, keep image name (e.g. `pavbot`), Dockerfile path `$(Build.SourcesDirectory)/Dockerfile`.
-6. Click **Validate and configure** — the wizard generates `azure-pipelines.yml` for you.
-7. Click **Save and run** → Commit directly to `main`.
-8. Watch the run: it builds the Docker image and pushes it to ACR tagged with the build ID.
-   - First run may ask you to **authorize** the auto-created service connection — click Permit.
-   - Free-tier note: if you see "No hosted parallelism", request the free grant at aka.ms/azpipelines-parallelism-request.
-
-Verify: Portal → your ACR → **Repositories** → you should see `pavbot` with a tag.
-
----
-
-## 5. Create the Web App for Containers (Azure Portal)
+## 2. Create the Web App (Azure Portal — code, not container)
 
 1. Portal → **Create a resource** → **Web App**.
-2. Resource group `rg-pavbot` · Name `pavbot-app-<unique>` · **Publish: Container** · OS: **Linux** · Plan: **B1** (or F1 Free).
-3. **Container tab**: Image source → **Azure Container Registry** → pick your registry, image `pavbot`, tag (latest build number).
-4. Review + Create.
-5. After deployment: Web App → **Settings → Environment variables** → add all four → Save (app restarts):
-
-   | Name | Value |
-   |---|---|
-   | `WEBSITES_PORT` | `8000` |
-   | `AZURE_AI_ENDPOINT` | `https://<your-resource>.services.ai.azure.com/models` |
-   | `AZURE_AI_API_KEY` | your Foundry key |
-   | `AZURE_AI_MODEL` | `mistral-small-2503` |
-
-   (Better practice for later: store the key in **Key Vault** and use a Key Vault reference `@Microsoft.KeyVault(SecretUri=...)` as the value.)
-6. Browse to `https://pavbot-app-<unique>.azurewebsites.net` — the chatbot should load and answer via the Foundry model.
-7. Quick check: open `/health` — it returns `"foundry_configured": true` when the env vars are picked up.
+2. Basics tab:
+   - Resource group: `rg-pavbot` (create new)
+   - Name: `pavbot-app-<unique>`
+   - **Publish: Code** ← (not Container)
+   - **Runtime stack: Python 3.12** · OS: **Linux**
+   - Plan: **B1** (or F1 Free)
+3. **Review + Create** → Create.
 
 ---
 
-## 6. Continuous deployment (UI, zero YAML)
+## 3. Wire up CI/CD in the portal (Deployment Center — zero YAML written by you)
 
-Option A — **Portal CD toggle (simplest)**:
-1. Web App → **Deployment Center** → Source shows Container Registry.
-2. Turn **Continuous deployment: On** → Save. This creates an ACR **webhook**: every time the pipeline pushes a new image tag/`latest`, App Service pulls and restarts automatically.
-   - Tip: in the pipeline YAML tags section, add `latest` under `tags:` so the webhook always fires on the same tag.
+1. Open the Web App → **Deployment → Deployment Center**.
+2. **Source: GitHub** → sign in / authorize Azure to access your GitHub account.
+3. Pick your **organization**, **repository** (`pavbot`), and **branch** (`main`).
+4. Authentication: keep the default (**User-assigned identity** or basic auth — the portal handles it).
+5. Click **Save**.
 
-Option B — **Release pipeline (classic UI)**:
-1. Azure DevOps → **Pipelines → Releases → New pipeline** → template **Azure App Service deployment**.
-2. Add artifact → source: your Build pipeline → enable the **continuous deployment trigger** (lightning bolt).
-3. In Stage 1 task: pick subscription, App type **Web App for Containers (Linux)**, your app name, registry/image/tag `$(Build.BuildId)`.
-4. Save → Create release. Every successful build now triggers a release to App Service.
+That's it — the portal auto-commits a GitHub Actions workflow (`.github/workflows/...`) to your repo and kicks off the first deployment. App Service's build engine (**Oryx**) detects `requirements.txt`, installs dependencies, and serves the Flask app with gunicorn automatically.
+
+Watch progress under **Deployment Center → Logs** (or the **Actions** tab in GitHub).
 
 ---
 
-## 7. Test the full loop
+## 4. Configure environment variables (Azure Portal)
+
+Web App → **Settings → Environment variables** → **App settings** → add → **Apply** (app restarts):
+
+| Name | Value |
+|---|---|
+| `AZURE_AI_ENDPOINT` | `https://<your-resource>.services.ai.azure.com/models` |
+| `AZURE_AI_API_KEY` | your Foundry key |
+| `AZURE_AI_MODEL` | `mistral-small-2503` |
+| `SCM_DO_BUILD_DURING_DEPLOYMENT` | `true` (usually set automatically) |
+
+(Better practice for later: store the key in **Key Vault** and use a Key Vault reference `@Microsoft.KeyVault(SecretUri=...)` as the value.)
+
+### Startup command
+
+Web App → **Settings → Configuration → General settings → Startup Command**:
+
+```
+gunicorn --bind=0.0.0.0:8000 --workers 2 app:app
+```
+
+(Optional — App Service auto-detects `app:app` for Flask, but setting it explicitly avoids surprises.) Note: with a startup command, App Service routes traffic to the port you bind; leaving the field empty also works since Oryx defaults to gunicorn.
+
+---
+
+## 5. Verify
+
+1. Browse to `https://pavbot-app-<unique>.azurewebsites.net` — the chatbot should load and answer via the Foundry model.
+2. Quick check: open `/health` — it returns `"foundry_configured": true` when the env vars are picked up.
+3. If the site shows the default page, check **Deployment Center → Logs** and **Monitoring → Log stream**.
+
+---
+
+## 6. Test the full CI/CD loop
 
 1. Edit `app.py` — e.g. change a bot reply.
-2. Commit + push to Azure Repos `main` (or edit directly in the Repos web UI).
-3. Pipeline triggers automatically → new image in ACR → App Service pulls the new container.
+2. Commit + push to GitHub `main` (or edit directly in the GitHub web UI).
+3. The workflow triggers automatically → builds → deploys to App Service.
 4. Refresh the site (allow ~1–2 min for restart).
 
 ---
@@ -158,4 +137,4 @@ Option B — **Release pipeline (classic UI)**:
 
 ## Cleanup
 
-Delete the resource group `rg-pavbot` to remove everything (ACR + App Plan + Web App) in one shot.
+Delete the resource group `rg-pavbot` to remove everything (App Plan + Web App) in one shot. Also delete the auto-created workflow file from the repo if you disconnect Deployment Center.

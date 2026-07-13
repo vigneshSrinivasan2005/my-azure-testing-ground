@@ -17,7 +17,7 @@ MODEL = os.environ.get("AZURE_AI_MODEL", "mistral-small-2503")
 
 SYSTEM_PROMPT = (
     "You are PavBot, a concise and friendly assistant powered by Mistral on Azure AI Foundry, "
-    "deployed as a Docker container on Azure App Service via Azure Pipelines. "
+    "deployed to Azure App Service with CI/CD set up through the Azure Portal. "
     "Keep answers short and practical."
 )
 

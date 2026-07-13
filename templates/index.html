@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PavBot — Flask · Docker · Azure</title>
+<title>PavBot — Flask · Azure App Service</title>
 <style>
   :root{
     --ink:#0e1a2b; --panel:#132a45; --panel-2:#1b3a5e;
@@ -63,7 +63,7 @@
     <div class="bot-mark">🤖</div>
     <div>
       <h1>PavBot</h1>
-      <div class="sub">Flask · Docker · Azure App Service</div>
+      <div class="sub">Flask · Azure App Service · Azure AI Foundry</div>
     </div>
   </header>
 
@@ -84,7 +84,7 @@
     </div>
   </div>
 
-  <footer>Deployed via Azure Repos → Azure Pipelines → ACR → Web App for Containers</footer>
+  <footer>Deployed via GitHub → Azure App Service (Deployment Center, portal CI/CD)</footer>
 </div>
 
 <script>
@@ -120,7 +120,7 @@ async function send(){
     history.push({role:'user', content:text});
     history.push({role:'assistant', content:data.reply});
   }catch(e){
-    typing.textContent = 'Server unreachable — is the container running?';
+    typing.textContent = 'Server unreachable — is the app running?';
   }
 }
 </script>
