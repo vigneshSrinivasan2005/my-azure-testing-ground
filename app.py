@@ -1,9 +1,14 @@
 import os
 
+from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 from azure.ai.inference import ChatCompletionsClient
 from azure.ai.inference.models import AssistantMessage, SystemMessage, UserMessage
 from azure.core.credentials import AzureKeyCredential
+
+# Load secrets from a local .env file if present (no-op in App Service,
+# where these come from real environment variables / app settings).
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -14,6 +19,8 @@ app = Flask(__name__)
 ENDPOINT = os.environ.get("AZURE_AI_ENDPOINT", "")
 API_KEY = os.environ.get("AZURE_AI_API_KEY", "")
 MODEL = os.environ.get("AZURE_AI_MODEL", "mistral-small-2503")
+# The Foundry models route rejects the SDK's default; pin a supported version.
+API_VERSION = os.environ.get("AZURE_AI_API_VERSION", "2024-05-01-preview")
 
 SYSTEM_PROMPT = (
     "You are PavBot, a concise and friendly assistant powered by Mistral on Azure AI Foundry, "
@@ -26,6 +33,7 @@ if ENDPOINT and API_KEY:
     client = ChatCompletionsClient(
         endpoint=ENDPOINT,
         credential=AzureKeyCredential(API_KEY),
+        api_version=API_VERSION,
     )
 
 
@@ -81,4 +89,4 @@ def health():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    app.run(host="0.0.0.0", port=8001)
