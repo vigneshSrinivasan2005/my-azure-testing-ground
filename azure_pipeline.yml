@@ -4,7 +4,11 @@ trigger:
       - dev
       - testing
       - main
-
+pr:
+  branches:
+    include:
+      - dev
+      - main
 pool:
   vmImage: 'ubuntu-latest'
 
