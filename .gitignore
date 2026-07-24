@@ -3,3 +3,21 @@ __pycache__/
 venv/
 .env
 .vscode/
+*.env
+
+
+# Terraform local state files (never commit state!)
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+crash.log
+crash.*.log
+
+# Terraform internal folder
+.terraform/
+.terraform.lock.hcl
+
+# Variable override files with potential secrets
+*.tfvars
+*.tfvars.json
+!example.tfvars
