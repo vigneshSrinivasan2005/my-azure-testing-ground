@@ -11,7 +11,7 @@ pool:
 variables:
   pythonVersion: '3.11'
   # Set your Azure Service Connection and App Name
-  azureServiceConnection: 'MyAzureServiceConnection'
+  azureServiceConnection: 'Azure-AppService-Conn'
   devAppName: 'my-ai-agent-dev'
   testAppName: 'my-ai-agent-test'
   prodAppName: 'my-ai-agent-prod'
