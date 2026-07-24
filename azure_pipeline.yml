@@ -1,0 +1,87 @@
+trigger:
+  branches:
+    include:
+      - dev
+      - testing
+      - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  pythonVersion: '3.11'
+  # Set your Azure Service Connection and App Name
+  azureServiceConnection: 'MyAzureServiceConnection'
+  devAppName: 'my-ai-agent-dev'
+  testAppName: 'my-ai-agent-test'
+  prodAppName: 'my-ai-agent-prod'
+
+stages:
+# STAGE 1: BUILD & TEST
+- stage: BuildAndTest
+  displayName: 'Build & Unit Test'
+  jobs:
+  - job: TestJob
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(pythonVersion)'
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+      displayName: 'Install dependencies'
+    - script: |
+        pytest --junitxml=test-results.xml
+      displayName: 'Run Pytest'
+    - task: PublishTestResults@2
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFiles: '**/test-results.xml'
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: '$(System.DefaultWorkingDirectory)'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+        ArtifactName: 'drop'
+
+# STAGE 2: DEPLOY TO DEV
+- stage: DeployDev
+  displayName: 'Deploy to Dev Environment'
+  dependsOn: BuildAndTest
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/dev'))
+  jobs:
+  - deployment: DeployDevJob
+    environment: 'development'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              appType: 'webAppLinux'
+              appName: '$(devAppName)'
+              package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
+
+# STAGE 3: DEPLOY TO PROD (Requires manual approval or main branch trigger)
+- stage: DeployProd
+  displayName: 'Deploy to Prod Environment'
+  dependsOn: BuildAndTest
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: DeployProdJob
+    environment: 'production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              appType: 'webAppLinux'
+              appName: '$(prodAppName)'
+              package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
