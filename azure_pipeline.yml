@@ -4,6 +4,12 @@ trigger:
       - dev
       - testing
       - main
+  paths:
+    exclude:
+      - '**.tf'
+      - '**.tfvars'
+      - '.github/**'
+      - 'README.md'
 
 pr:
   branches:
@@ -16,18 +22,18 @@ pool:
 
 variables:
   pythonVersion: '3.12'
-  terraformVersion: '1.5.0'
   azureServiceConnection: 'Azure-AppService-Conn'
   devAppName: 'app-hr-helpdesk-dev'
   testAppName: 'app-hr-helpdesk-testing'
   prodAppName: 'app-hr-helpdesk-prod'
 
 stages:
-# STAGE 1: BUILD, UNIT TEST & INFRASTRUCTURE VALIDATION
-- stage: BuildTestValidate
-  displayName: 'Build, Unit Test & Terraform Validation'
+# STAGE 1: APPLICATION BUILD & UNIT TESTING
+- stage: BuildAndTest
+  displayName: 'App Build & Unit Testing'
   jobs:
-  - job: TestAndValidateJob
+  - job: TestAndPackageJob
+    displayName: 'Run Pytest & Package Application'
     steps:
     - task: UsePythonVersion@0
       inputs:
@@ -49,20 +55,13 @@ stages:
         testResultsFiles: '**/test-results.xml'
       displayName: 'Publish Unit Test Results'
 
-    - script: |
-        echo "Validating Infrastructure as Code (Terraform)..."
-        terraform fmt -check
-        terraform init -backend=false
-        terraform validate
-      displayName: 'Terraform Format & Syntax Validation'
-
     - task: ArchiveFiles@2
       inputs:
         rootFolderOrFile: '$(System.DefaultWorkingDirectory)'
         includeRootFolder: false
         archiveType: 'zip'
         archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
-      displayName: 'Archive Build Artifacts'
+      displayName: 'Archive Application Zip Artifact'
 
     - task: PublishBuildArtifacts@1
       inputs:
@@ -72,8 +71,8 @@ stages:
 
 # STAGE 2: DEPLOY TO DEV ENVIRONMENT
 - stage: DeployDev
-  displayName: 'Deploy to Dev Environment'
-  dependsOn: BuildTestValidate
+  displayName: 'Deploy Application to Dev Environment'
+  dependsOn: BuildAndTest
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/dev'))
   jobs:
   - deployment: DeployDevJob
@@ -89,10 +88,10 @@ stages:
               appName: '$(devAppName)'
               package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
 
-# STAGE 3: DEPLOY TO TESTING STAGING ENVIRONMENT
+# STAGE 3: DEPLOY TO TESTING ENVIRONMENT
 - stage: DeployTesting
-  displayName: 'Deploy to Testing Environment'
-  dependsOn: BuildTestValidate
+  displayName: 'Deploy Application to Testing Environment'
+  dependsOn: BuildAndTest
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/testing'))
   jobs:
   - deployment: DeployTestJob
@@ -110,8 +109,8 @@ stages:
 
 # STAGE 4: DEPLOY TO PRODUCTION ENVIRONMENT
 - stage: DeployProd
-  displayName: 'Deploy to Production Environment'
-  dependsOn: BuildTestValidate
+  displayName: 'Deploy Application to Production Environment'
+  dependsOn: BuildAndTest
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
   jobs:
   - deployment: DeployProdJob
