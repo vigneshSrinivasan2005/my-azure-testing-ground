@@ -4,59 +4,76 @@ trigger:
       - dev
       - testing
       - main
+
 pr:
   branches:
     include:
       - dev
       - main
+
 pool:
   vmImage: 'ubuntu-latest'
 
 variables:
   pythonVersion: '3.12'
-  # Azure Service Connection
+  terraformVersion: '1.5.0'
   azureServiceConnection: 'Azure-AppService-Conn'
-  # Updated to match the existing App Service provisioned by Terraform
-  devAppName: 'app-my-azure-testing-ground-dev'
-  testAppName: 'app-my-azure-testing-ground-testing'
-  prodAppName: 'app-my-azure-testing-ground-prod'
+  devAppName: 'app-hr-helpdesk-dev'
+  testAppName: 'app-hr-helpdesk-testing'
+  prodAppName: 'app-hr-helpdesk-prod'
 
 stages:
-# STAGE 1: BUILD & TEST
-- stage: BuildAndTest
-  displayName: 'Build & Unit Test'
+# STAGE 1: BUILD, UNIT TEST & INFRASTRUCTURE VALIDATION
+- stage: BuildTestValidate
+  displayName: 'Build, Unit Test & Terraform Validation'
   jobs:
-  - job: TestJob
+  - job: TestAndValidateJob
     steps:
     - task: UsePythonVersion@0
       inputs:
         versionSpec: '$(pythonVersion)'
+      displayName: 'Setup Python $(pythonVersion)'
+
     - script: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-      displayName: 'Install dependencies'
+      displayName: 'Install Application Dependencies'
+
     - script: |
         pytest --junitxml=test-results.xml
-      displayName: 'Run Pytest'
+      displayName: 'Run Pytest Unit Tests'
+
     - task: PublishTestResults@2
       condition: succeededOrFailed()
       inputs:
         testResultsFiles: '**/test-results.xml'
+      displayName: 'Publish Unit Test Results'
+
+    - script: |
+        echo "Validating Infrastructure as Code (Terraform)..."
+        terraform fmt -check
+        terraform init -backend=false
+        terraform validate
+      displayName: 'Terraform Format & Syntax Validation'
+
     - task: ArchiveFiles@2
       inputs:
         rootFolderOrFile: '$(System.DefaultWorkingDirectory)'
         includeRootFolder: false
         archiveType: 'zip'
         archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+      displayName: 'Archive Build Artifacts'
+
     - task: PublishBuildArtifacts@1
       inputs:
         PathtoPublish: '$(Build.ArtifactStagingDirectory)'
         ArtifactName: 'drop'
+      displayName: 'Publish Build Artifacts'
 
-# STAGE 2: DEPLOY TO DEV
+# STAGE 2: DEPLOY TO DEV ENVIRONMENT
 - stage: DeployDev
   displayName: 'Deploy to Dev Environment'
-  dependsOn: BuildAndTest
+  dependsOn: BuildTestValidate
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/dev'))
   jobs:
   - deployment: DeployDevJob
@@ -72,10 +89,29 @@ stages:
               appName: '$(devAppName)'
               package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
 
-# STAGE 3: DEPLOY TO PROD
+# STAGE 3: DEPLOY TO TESTING STAGING ENVIRONMENT
+- stage: DeployTesting
+  displayName: 'Deploy to Testing Environment'
+  dependsOn: BuildTestValidate
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/testing'))
+  jobs:
+  - deployment: DeployTestJob
+    environment: 'testing'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              appType: 'webAppLinux'
+              appName: '$(testAppName)'
+              package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
+
+# STAGE 4: DEPLOY TO PRODUCTION ENVIRONMENT
 - stage: DeployProd
-  displayName: 'Deploy to Prod Environment'
-  dependsOn: BuildAndTest
+  displayName: 'Deploy to Production Environment'
+  dependsOn: BuildTestValidate
   condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
   jobs:
   - deployment: DeployProdJob

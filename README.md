@@ -1,140 +1,145 @@
-# PavBot — LLM Chatbot on Azure AI Foundry (ClickOps CI/CD, no Docker)
+# Intelligent HR HelpDesk — Cloud Engineering & DevOps Architecture
 
-Flask chatbot powered by an **Azure AI Foundry** model deployment (Mistral Small 2503, serverless), deployed as **code** (no containers) to **Azure App Service**, with CI/CD wired up entirely through the **Azure Portal UI** (Deployment Center).
-
-Flow: **GitHub → Azure App Service Deployment Center (portal ClickOps) → auto-generated CI/CD → App Service builds & runs the app → Azure AI Foundry model**
+> **DevOps Engineer**: Vignesh Srinivasan  
+> **Architecture**: 3-Tier Client-Server-Database Cloud Architecture on Microsoft Azure  
+> **Infrastructure as Code**: Terraform  
+> **CI/CD Automation**: Multi-Stage Azure DevOps Pipelines (`azure_pipeline.yml`)
 
 ---
 
-## 0a. Set up the model in Azure AI Foundry (UI)
+## 1. Overview & Cloud Architecture
 
-1. Go to **ai.azure.com** (Azure AI Foundry portal) → sign in with the same subscription.
-2. **Create a project** (this also creates an Azure OpenAI / AI Services resource in your resource group — put it in `rg-pavbot`).
-3. Left menu → **Model catalog** → pick **mistral-small-2503** → **Deploy** → Deployment type: **Global Standard** → keep the deployment name `mistral-small-2503` → Deploy.
-4. Go to **My assets → Models + endpoints** → click your deployment. Copy three things:
-   - **Target URI / Endpoint**
-   - **Key**
-   - **Deployment name** (e.g. `mistral-small-2503`)
+The **Intelligent HR HelpDesk Platform** is designed as a secure, scalable 3-tier cloud application deployed on Azure. It automates employee workplace support through AI-powered ticket triage, sentiment analysis, policy RAG queries, and ticket summarization.
 
-These become environment variables — never hardcode them or commit them to the repo:
+### 3-Tier Architecture Diagram
 
-| Variable | Value |
-|---|---|
-| `AZURE_AI_ENDPOINT` | `https://<your-resource>.services.ai.azure.com/models` |
-| `AZURE_AI_API_KEY` | key from step 4 |
-| `AZURE_AI_MODEL` | your deployment name |
+```mermaid
+flowchart TD
+    subgraph ClientLayer ["Client Layer"]
+        Employee["Employee Browser"]
+        HR["HR Specialist Browser"]
+    end
 
-## 0b. Run locally first
+    subgraph AzureCloud ["Azure Cloud Infrastructure (rg-hr-helpdesk-dev / prod)"]
+        subgraph VNet ["Virtual Network (10.0.0.0/16)"]
+            subgraph AppSubnet ["App Subnet (10.0.1.0/24)"]
+                WebApp["Azure Linux Web App\n(Gunicorn + Flask)"]
+            end
+
+            subgraph DBSubnet ["Database Subnet (10.0.2.0/24)"]
+                SQLHot["Azure SQL Database\n(sqldb-hot-helpdesk)"]
+                SQLArchive["Azure SQL Archive DB\n(sqldb-archive-helpdesk)"]
+            end
+        end
+
+        subgraph StorageLayer ["Storage & AI Services"]
+            BlobStorage["Azure Blob Storage\n(tickets-attachments & audit-logs)"]
+            AIFoundry["Azure AI Foundry Account\n(Cognitive Services / Mistral-Small)"]
+        end
+
+        subgraph MonitoringLayer ["Monitoring & Observability"]
+            AppInsights["Application Insights"]
+            LogAnalytics["Log Analytics Workspace"]
+        end
+    end
+
+    Employee -->|HTTPS| WebApp
+    HR -->|HTTPS| WebApp
+    WebApp -->|VNet Integration| SQLHot
+    WebApp -->|VNet Integration| SQLArchive
+    WebApp -->|Private SDK| BlobStorage
+    WebApp -->|REST API| AIFoundry
+    WebApp -->|Telemetry| AppInsights
+    AppInsights --> LogAnalytics
+```
+
+---
+
+## 2. Infrastructure as Code (Terraform)
+
+The entire infrastructure is declared using Terraform with modular variable files for environment isolation (`dev`, `prod`).
+
+### Provisioned Azure Resources
+
+| Resource | Terraform Name | Description |
+|---|---|---|
+| **Resource Group** | `azurerm_resource_group.rg` | Resource container (`rg-hr-helpdesk-dev`) |
+| **Virtual Network** | `azurerm_virtual_network.vnet` | 3-tier VNet (`10.0.0.0/16` for Dev, `10.10.0.0/16` for Prod) |
+| **App Subnet** | `azurerm_subnet.app_subnet` | Delegated subnet for App Service VNet Integration |
+| **DB Subnet** | `azurerm_subnet.db_subnet` | Isolated database subnet with SQL service endpoint |
+| **App Service Plan** | `azurerm_service_plan.asp` | Linux Service Plan (F1 Free / B1 Basic) |
+| **Web App** | `azurerm_linux_web_app.app` | Linux Web App running Python 3.12 stack |
+| **Azure SQL Server** | `azurerm_mssql_server.sql_server` | Managed SQL Server with TLS 1.2 enforced |
+| **Hot Database** | `azurerm_mssql_database.sql_db_hot` | Active ticket database (`sqldb-hot-helpdesk`) |
+| **Archive Database** | `azurerm_mssql_database.sql_db_archive` | Resolved ticket audit store (`sqldb-archive-helpdesk`) |
+| **Storage Account** | `azurerm_storage_account.sa` | Blob storage for attachments and audit archives |
+| **AI Foundry Account** | `azurerm_cognitive_account.ai_foundry` | Azure Cognitive Services AI Foundry model host |
+| **Application Insights** | `azurerm_application_insights.app_insights` | Performance and error telemetry collector |
+| **Log Analytics** | `azurerm_log_analytics_workspace.log_workspace` | Log retention and querying workspace |
+
+### Infrastructure Commands
 
 ```bash
-pip install -r requirements.txt
+# 1. Initialize backend state and providers
+terraform init
 
-# Windows (PowerShell)
-$env:AZURE_AI_ENDPOINT="https://<your-resource>.services.ai.azure.com/models"
-$env:AZURE_AI_API_KEY="<key>"
-$env:AZURE_AI_MODEL="mistral-small-2503"
+# 2. Check formatting
+terraform fmt -check
 
-# Linux/macOS
-export AZURE_AI_ENDPOINT="https://<your-resource>.services.ai.azure.com/models"
-export AZURE_AI_API_KEY="<key>"
-export AZURE_AI_MODEL="mistral-small-2503"
+# 3. Validate syntax
+terraform validate
 
-python app.py            # http://localhost:8000
+# 4. Generate deployment execution plan (Dev)
+terraform plan -var-file=dev.tfvars
+
+# 5. Apply infrastructure (Dev)
+terraform apply -var-file=dev.tfvars -auto-approve
 ```
 
 ---
 
-## 1. Push to GitHub
+## 3. Multi-Stage CI/CD Azure DevOps Pipeline
 
-```bash
-cd chatbot-app
-git init
-git add .
-git commit -m "Initial commit: Flask chatbot"
-git branch -M main
-git remote add origin https://github.com/<your-username>/pavbot.git
-git push -u origin main
+The automated deployment pipeline is configured in [`azure_pipeline.yml`](file:///Users/vigneshsrinivasan/Desktop/Training/Cloud-Engineering/my-azure-testing-ground/azure_pipeline.yml).
+
+### Pipeline Stages & Triggers
+
+```
+[ Git Push ] ──► STAGE 1: BuildTestValidate
+                    ├── Python 3.12 Setup & Pip Dependencies
+                    ├── Pytest Unit Tests Execution
+                    ├── Terraform Format & Syntax Validation
+                    └── Publish Build Artifact (.zip)
+                          │
+         ┌────────────────┼────────────────┐
+         ▼                ▼                ▼
+   Branch: dev     Branch: testing    Branch: main
+         │                │                │
+  STAGE 2: Dev    STAGE 3: Testing  STAGE 4: Prod
+ (App Service Dev) (App Service Test) (App Service Prod)
 ```
 
 ---
 
-## 2. Create the Web App (Azure Portal — code, not container)
+## 4. Environment Variables Matrix
 
-1. Portal → **Create a resource** → **Web App**.
-2. Basics tab:
-   - Resource group: `rg-pavbot` (create new)
-   - Name: `pavbot-app-<unique>`
-   - **Publish: Code** ← (not Container)
-   - **Runtime stack: Python 3.12** · OS: **Linux**
-   - Plan: **B1** (or F1 Free)
-3. **Review + Create** → Create.
+The application picks up connection credentials dynamically via environment variables. Refer to [`.env.example`](file:///Users/vigneshsrinivasan/Desktop/Training/Cloud-Engineering/my-azure-testing-ground/.env.example) for local settings.
 
----
-
-## 3. Wire up CI/CD in the portal (Deployment Center — zero YAML written by you)
-
-1. Open the Web App → **Deployment → Deployment Center**.
-2. **Source: GitHub** → sign in / authorize Azure to access your GitHub account.
-3. Pick your **organization**, **repository** (`pavbot`), and **branch** (`main`).
-4. Authentication: keep the default (**User-assigned identity** or basic auth — the portal handles it).
-5. Click **Save**.
-
-That's it — the portal auto-commits a GitHub Actions workflow (`.github/workflows/...`) to your repo and kicks off the first deployment. App Service's build engine (**Oryx**) detects `requirements.txt`, installs dependencies, and serves the Flask app with gunicorn automatically.
-
-Watch progress under **Deployment Center → Logs** (or the **Actions** tab in GitHub).
+| Setting | Purpose | Secret? |
+|---|---|---|
+| `AZURE_SQL_HOST` | Fully Qualified Domain Name of Azure SQL Server | No |
+| `AZURE_SQL_HOT_DB` | Primary Hot Database name | No |
+| `AZURE_SQL_ARCHIVE_DB` | Cold Archive Database name | No |
+| `AZURE_STORAGE_ACCOUNT` | Blob storage account name | No |
+| `AZURE_AI_ENDPOINT` | Azure AI Foundry / Cognitive Endpoint | No |
+| `AZURE_AI_API_KEY` | Azure AI Foundry API key | **Yes** |
+| `AZURE_AI_MODEL` | AI Model deployment name (`mistral-small-2503`) | No |
+| `APPINSIGHTS_INSTRUMENTATIONKEY` | Application Insights key | **Yes** |
 
 ---
 
-## 4. Configure environment variables (Azure Portal)
+## 5. Maintenance & Observability Plan
 
-Web App → **Settings → Environment variables** → **App settings** → add → **Apply** (app restarts):
-
-| Name | Value |
-|---|---|
-| `AZURE_AI_ENDPOINT` | `https://<your-resource>.services.ai.azure.com/models` |
-| `AZURE_AI_API_KEY` | your Foundry key |
-| `AZURE_AI_MODEL` | `mistral-small-2503` |
-| `SCM_DO_BUILD_DURING_DEPLOYMENT` | `true` (usually set automatically) |
-
-(Better practice for later: store the key in **Key Vault** and use a Key Vault reference `@Microsoft.KeyVault(SecretUri=...)` as the value.)
-
-### Startup command
-
-Web App → **Settings → Configuration → General settings → Startup Command**:
-
-```
-gunicorn --bind=0.0.0.0:8000 --workers 2 app:app
-```
-
-(Optional — App Service auto-detects `app:app` for Flask, but setting it explicitly avoids surprises.) Note: with a startup command, App Service routes traffic to the port you bind; leaving the field empty also works since Oryx defaults to gunicorn.
-
----
-
-## 5. Verify
-
-1. Browse to `https://pavbot-app-<unique>.azurewebsites.net` — the chatbot should load and answer via the Foundry model.
-2. Quick check: open `/health` — it returns `"foundry_configured": true` when the env vars are picked up.
-3. If the site shows the default page, check **Deployment Center → Logs** and **Monitoring → Log stream**.
-
----
-
-## 6. Test the full CI/CD loop
-
-1. Edit `app.py` — e.g. change a bot reply.
-2. Commit + push to GitHub `main` (or edit directly in the GitHub web UI).
-3. The workflow triggers automatically → builds → deploys to App Service.
-4. Refresh the site (allow ~1–2 min for restart).
-
----
-
-## Endpoints
-
-| Route | Purpose |
-|---|---|
-| `/` | Chat UI |
-| `/api/chat` (POST) | `{"message": "..."}` → `{"reply": "..."}` |
-| `/health` | Health probe for App Service |
-
-## Cleanup
-
-Delete the resource group `rg-pavbot` to remove everything (App Plan + Web App) in one shot. Also delete the auto-created workflow file from the repo if you disconnect Deployment Center.
+1. **System Health & Alerting**: Application Insights monitors response latency, 5xx server errors, and SLA breaches.
+2. **Database Backup & Retention**: Azure SQL automated daily backups with retention in `sqldb-archive-helpdesk`.
+3. **Security & VNet Isolation**: VNet Integration forces backend data access strictly through App Subnet to DB Subnet.
