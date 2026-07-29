@@ -1,140 +1,123 @@
-# PavBot — LLM Chatbot on Azure AI Foundry (ClickOps CI/CD, no Docker)
+# Intelligent HR HelpDesk — Cloud Engineering & DevOps Architecture
 
-Flask chatbot powered by an **Azure AI Foundry** model deployment (Mistral Small 2503, serverless), deployed as **code** (no containers) to **Azure App Service**, with CI/CD wired up entirely through the **Azure Portal UI** (Deployment Center).
-
-Flow: **GitHub → Azure App Service Deployment Center (portal ClickOps) → auto-generated CI/CD → App Service builds & runs the app → Azure AI Foundry model**
+> **DevOps Engineer**: Vignesh Srinivasan  
+> **Architecture**: 3-Tier Client-Server-Database Cloud Architecture on Microsoft Azure  
+> **Infrastructure as Code**: Terraform (Manual Provisioning via GitHub Actions `workflow_dispatch`)  
+> **Application CI/CD Automation**: Multi-Stage Azure DevOps Pipelines (`azure_pipeline.yml`)
 
 ---
 
-## 0a. Set up the model in Azure AI Foundry (UI)
+## 1. Overview & Cloud Architecture
 
-1. Go to **ai.azure.com** (Azure AI Foundry portal) → sign in with the same subscription.
-2. **Create a project** (this also creates an Azure OpenAI / AI Services resource in your resource group — put it in `rg-pavbot`).
-3. Left menu → **Model catalog** → pick **mistral-small-2503** → **Deploy** → Deployment type: **Global Standard** → keep the deployment name `mistral-small-2503` → Deploy.
-4. Go to **My assets → Models + endpoints** → click your deployment. Copy three things:
-   - **Target URI / Endpoint**
-   - **Key**
-   - **Deployment name** (e.g. `mistral-small-2503`)
+The **Intelligent HR HelpDesk Platform** is designed as a secure, scalable 3-tier cloud application deployed on Azure. It automates employee workplace support through AI-powered ticket triage, sentiment analysis, policy RAG queries, and ticket summarization.
 
-These become environment variables — never hardcode them or commit them to the repo:
+### Dual-Pipeline Hybrid Architecture Diagram
 
-| Variable | Value |
-|---|---|
-| `AZURE_AI_ENDPOINT` | `https://<your-resource>.services.ai.azure.com/models` |
-| `AZURE_AI_API_KEY` | key from step 4 |
-| `AZURE_AI_MODEL` | your deployment name |
+```mermaid
+flowchart TD
+    subgraph Repo ["GitHub Repository"]
+        InfraFiles["Terraform IaC\n(*.tf, *.tfvars)"]
+        AppFiles["Python Flask App\n(app.py, templates/, tests/)"]
+    end
 
-## 0b. Run locally first
+    subgraph GitHubActions ["GitHub Actions (.github/workflows/provision-infra.yml)"]
+        ManualTrigger["Manual Run (workflow_dispatch)\nSelect Environment & Action"]
+        TFValidate["1. Terraform fmt & validate"]
+        TFPlan["2. Terraform plan (-var-file)"]
+        TFApply["3. Terraform apply (if action=apply)"]
+    end
+
+    subgraph AzureDevOps ["Azure DevOps Pipelines (azure_pipeline.yml)"]
+        PyTest["1. Pytest Unit Tests & Coverage"]
+        PackageApp["2. Archive Zip Build Artifact"]
+        DeployApp["3. Deploy via AzureWebApp@1"]
+    end
+
+    subgraph AzureCloud ["Microsoft Azure Cloud (rg-hr-helpdesk-dev / prod)"]
+        RG["Resource Group"]
+        WebAppDev["Dev Web App (app-hr-helpdesk-dev)"]
+        WebAppProd["Prod Web App (app-hr-helpdesk-prod)"]
+        SQLDB["Azure SQL Server & Dual DBs"]
+        Storage["Blob Storage & AI Foundry"]
+    end
+
+    InfraFiles -.->|Manual Trigger| GitHubActions
+    ManualTrigger --> TFValidate --> TFPlan --> TFApply
+    TFApply -->|Provision Infrastructure| AzureCloud
+
+    AppFiles -->|Push / PR| AzureDevOps
+    PyTest --> PackageApp --> DeployApp
+    DeployApp -->|Deploy Code Package| WebAppDev
+    DeployApp -->|Deploy Code Package| WebAppProd
+```
+
+---
+
+## 2. Infrastructure Provisioning (Manual via GitHub Actions)
+
+Infrastructure provisioning is **strictly manual** to prevent accidental environment mutations. All Terraform actions must be explicitly triggered using **GitHub Actions `workflow_dispatch`**.
+
+### Running Manual Provisioning
+
+1. Go to your GitHub repository **Actions** tab.
+2. Select the **`Provision Infrastructure (Terraform)`** workflow.
+3. Click **Run workflow**.
+4. Choose the target inputs:
+   - **Target deployment environment**: `dev` or `prod`
+   - **Terraform Action**: `plan` (preview changes) or `apply` (provision infrastructure)
+
+### Required GitHub Secrets for Terraform Provisioning
+
+Configure the following repository secrets in GitHub under **Settings > Secrets and variables > Actions**:
+
+- `AZURE_CLIENT_ID`: Azure Service Principal Application (Client) ID
+- `AZURE_CLIENT_SECRET`: Azure Service Principal Client Secret
+- `AZURE_TENANT_ID`: Azure Directory (Tenant) ID
+- `AZURE_SUBSCRIPTION_ID`: Azure Subscription ID
+- `TF_VAR_SQL_ADMIN_PASSWORD`: Secure administrator password for Azure SQL Server
+
+---
+
+## 3. Application CI/CD (Azure DevOps Pipelines)
+
+Application code compilation, unit testing, artifact packaging, and deployment to provisioned Azure Web Apps are automated via **Azure DevOps Pipelines** ([`azure_pipeline.yml`](file:///Users/vigneshsrinivasan/Desktop/Training/Cloud-Engineering/my-azure-testing-ground/azure_pipeline.yml)).
+
+### Pipeline Stages
+
+```
+[ Git Push ] ──► STAGE 1: BuildAndTest
+                    ├── Setup Python 3.12 & Install Pip Dependencies
+                    ├── Execute Pytest Unit Tests & Publish XML Report
+                    └── Archive & Publish App Zip Artifact (.zip)
+                          │
+          ┌───────────────┼───────────────┐
+          ▼               ▼               ▼
+    Branch: dev    Branch: testing   Branch: main
+          │               │               │
+   STAGE 2: Dev   STAGE 3: Testing STAGE 4: Prod
+  (App Service Dev)(App Service Test)(App Service Prod)
+```
+
+### Azure DevOps Service Connection Setup
+
+In Azure DevOps, configure an ARM Service Principal connection named **`Azure-AppService-Conn`**:
+1. Navigate to **Project Settings > Service connections > New service connection**.
+2. Select **Azure Resource Manager > Service principal (automatic/manual)**.
+3. Grant access permissions to the target Azure Subscription and Resource Group (`rg-hr-helpdesk-dev` / `rg-hr-helpdesk-prod`).
+
+---
+
+## 4. Local Execution & Validation Commands
 
 ```bash
-pip install -r requirements.txt
+# 1. Local Python Unit Testing
+pytest
 
-# Windows (PowerShell)
-$env:AZURE_AI_ENDPOINT="https://<your-resource>.services.ai.azure.com/models"
-$env:AZURE_AI_API_KEY="<key>"
-$env:AZURE_AI_MODEL="mistral-small-2503"
+# 2. Terraform Syntax Validation & Format Check
+terraform fmt -check
+terraform init -backend=false
+terraform validate
 
-# Linux/macOS
-export AZURE_AI_ENDPOINT="https://<your-resource>.services.ai.azure.com/models"
-export AZURE_AI_API_KEY="<key>"
-export AZURE_AI_MODEL="mistral-small-2503"
-
-python app.py            # http://localhost:8000
+# 3. Local Terraform Plan (Dev Environment)
+terraform plan -var-file=dev.tfvars
 ```
-
----
-
-## 1. Push to GitHub
-
-```bash
-cd chatbot-app
-git init
-git add .
-git commit -m "Initial commit: Flask chatbot"
-git branch -M main
-git remote add origin https://github.com/<your-username>/pavbot.git
-git push -u origin main
-```
-
----
-
-## 2. Create the Web App (Azure Portal — code, not container)
-
-1. Portal → **Create a resource** → **Web App**.
-2. Basics tab:
-   - Resource group: `rg-pavbot` (create new)
-   - Name: `pavbot-app-<unique>`
-   - **Publish: Code** ← (not Container)
-   - **Runtime stack: Python 3.12** · OS: **Linux**
-   - Plan: **B1** (or F1 Free)
-3. **Review + Create** → Create.
-
----
-
-## 3. Wire up CI/CD in the portal (Deployment Center — zero YAML written by you)
-
-1. Open the Web App → **Deployment → Deployment Center**.
-2. **Source: GitHub** → sign in / authorize Azure to access your GitHub account.
-3. Pick your **organization**, **repository** (`pavbot`), and **branch** (`main`).
-4. Authentication: keep the default (**User-assigned identity** or basic auth — the portal handles it).
-5. Click **Save**.
-
-That's it — the portal auto-commits a GitHub Actions workflow (`.github/workflows/...`) to your repo and kicks off the first deployment. App Service's build engine (**Oryx**) detects `requirements.txt`, installs dependencies, and serves the Flask app with gunicorn automatically.
-
-Watch progress under **Deployment Center → Logs** (or the **Actions** tab in GitHub).
-
----
-
-## 4. Configure environment variables (Azure Portal)
-
-Web App → **Settings → Environment variables** → **App settings** → add → **Apply** (app restarts):
-
-| Name | Value |
-|---|---|
-| `AZURE_AI_ENDPOINT` | `https://<your-resource>.services.ai.azure.com/models` |
-| `AZURE_AI_API_KEY` | your Foundry key |
-| `AZURE_AI_MODEL` | `mistral-small-2503` |
-| `SCM_DO_BUILD_DURING_DEPLOYMENT` | `true` (usually set automatically) |
-
-(Better practice for later: store the key in **Key Vault** and use a Key Vault reference `@Microsoft.KeyVault(SecretUri=...)` as the value.)
-
-### Startup command
-
-Web App → **Settings → Configuration → General settings → Startup Command**:
-
-```
-gunicorn --bind=0.0.0.0:8000 --workers 2 app:app
-```
-
-(Optional — App Service auto-detects `app:app` for Flask, but setting it explicitly avoids surprises.) Note: with a startup command, App Service routes traffic to the port you bind; leaving the field empty also works since Oryx defaults to gunicorn.
-
----
-
-## 5. Verify
-
-1. Browse to `https://pavbot-app-<unique>.azurewebsites.net` — the chatbot should load and answer via the Foundry model.
-2. Quick check: open `/health` — it returns `"foundry_configured": true` when the env vars are picked up.
-3. If the site shows the default page, check **Deployment Center → Logs** and **Monitoring → Log stream**.
-
----
-
-## 6. Test the full CI/CD loop
-
-1. Edit `app.py` — e.g. change a bot reply.
-2. Commit + push to GitHub `main` (or edit directly in the GitHub web UI).
-3. The workflow triggers automatically → builds → deploys to App Service.
-4. Refresh the site (allow ~1–2 min for restart).
-
----
-
-## Endpoints
-
-| Route | Purpose |
-|---|---|
-| `/` | Chat UI |
-| `/api/chat` (POST) | `{"message": "..."}` → `{"reply": "..."}` |
-| `/health` | Health probe for App Service |
-
-## Cleanup
-
-Delete the resource group `rg-pavbot` to remove everything (App Plan + Web App) in one shot. Also delete the auto-created workflow file from the repo if you disconnect Deployment Center.
