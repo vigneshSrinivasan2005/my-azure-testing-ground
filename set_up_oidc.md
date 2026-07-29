@@ -26,7 +26,7 @@ Step 6:az ad app federated-credential create \
   --parameters '{
     "name": "github-actions-main-branch",
     "issuer": "https://token.actions.githubusercontent.com",
-    "subject": "repo:vigneshSrinivasan2005/my-azure-testing-ground:environment:production"
+    "subject": "repo:vigneshSrinivasan2005/my-azure-testing-ground:environment:production",
     "description": "GitHub Actions OIDC Trust",
     "audiences": ["api://AzureADTokenExchange"]
   }'
